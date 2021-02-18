@@ -1,10 +1,11 @@
 use {
     clap::{App, Arg, SubCommand},
-    kvs::KvStore,
-    std::{path::PathBuf, process::exit},
+    failure::Fail,
+    kvs::{KvStore, KvsError, Result},
+    std::process::exit,
 };
 
-fn main() {
+fn main() -> Result<()> {
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .about("CARGO_PKG_DESCRIPTION")
@@ -28,37 +29,47 @@ fn main() {
         )
         .get_matches();
 
-    if std::env::args().len() < 1 {
+    if std::env::args().len() < 2 {
         println!("{}", matches.usage());
         exit(1);
     }
 
-    let mut kvs = KvStore::new();
+    let mut kvs = KvStore::open("./")?;
 
-    match matches.subcommand() {
+    Ok(match matches.subcommand() {
         ("get", Some(args)) => {
-            panic!("unimplemented");
-            let key = args.value_of("key").unwrap();
-            match kvs.get(key.to_string()) {
+            let key = args.value_of("key").ok_or(CliError::Key)?;
+            match kvs.get(key.to_string())? {
                 Some(value) => {
-                    println!("{} => {}", key, value)
+                    println!("{}", value)
                 }
-                None => {}
+                None => {
+                    println!("Key not found")
+                }
             }
         }
         ("set", Some(args)) => {
-            panic!("unimplemented");
-            let key = args.value_of("key").unwrap();
-            let value = args.value_of("value").unwrap();
-            kvs.set(key.to_string(), value.to_string());
+            let key = args.value_of("key").ok_or(CliError::Key)?;
+            let value = args.value_of("value").ok_or(CliError::Value)?;
+            kvs.set(key.to_string(), value.to_string())?;
         }
         ("rm", Some(args)) => {
-            panic!("unimplemented");
-            let key = args.value_of("key").unwrap();
-            kvs.remove(key.to_string());
+            let key = args.value_of("key").ok_or(CliError::Key)?;
+            if let Err(err) = kvs.remove(key.to_string()) {
+                println!("Key not found");
+                exit(1);
+            }
         }
         (cmd, _) => {
-            panic!(format!("no command {}, please check input", cmd))
+            return Err(KvsError::UnKnownOperation(cmd.to_string()).into());
         }
-    }
+    })
+}
+
+#[derive(Fail, Debug)]
+enum CliError {
+    #[fail(display = "The key is wanted")]
+    Key,
+    #[fail(display = "The value is wanted")]
+    Value,
 }
