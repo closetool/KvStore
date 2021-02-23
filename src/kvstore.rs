@@ -1,17 +1,20 @@
 use {
-    crate::errors::{KvsError, Result},
-    serde::{Deserialize,  Serialize},
+    crate::{
+        errors::{KvsError, Result},
+        KvsEngine,
+    },
+    serde::{Deserialize, Serialize},
     std::{
         collections::HashMap,
         ffi::OsStr,
         fs::{self, File},
-        io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+        io::{ Read, Seek, SeekFrom, Write},
         path::PathBuf,
     },
 };
 
-const MB:u64 = 8*1024*1024;
-const THRESHOLD:u64 = 1*MB;
+const MB: u64 = 8 * 1024 * 1024;
+const THRESHOLD: u64 = 1 * MB;
 
 pub struct KvStore {
     path: PathBuf,
@@ -20,26 +23,8 @@ pub struct KvStore {
     index: HashMap<String, Record>,
 }
 
-impl KvStore {
-    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
-        let path: PathBuf = path.into();
-        if !path.exists() {
-            fs::create_dir_all(path.clone())?;
-        }
-        let mut kvs = KvStore {
-            log_pointer: 0,
-            logs: HashMap::new(),
-            path: path.clone(),
-            index: HashMap::new(),
-        };
-        kvs.build()?;
-        if kvs.log_pointer == 0 {
-            kvs.new_log()?;
-        }
-        Ok(kvs)
-    }
-
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
+impl KvsEngine for KvStore {
+    fn set(&mut self, key: String, value: String) -> Result<()> {
         let log = self.get_log(self.log_pointer)?;
         let cmd = Command::Set {
             key: key.to_string(),
@@ -61,7 +46,7 @@ impl KvStore {
         Ok(())
     }
 
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
+    fn get(&mut self, key: String) -> Result<Option<String>> {
         let rcd = self.index.get(&key).cloned();
         Ok(match rcd {
             Some(value) => {
@@ -77,7 +62,7 @@ impl KvStore {
         })
     }
 
-    pub fn remove(&mut self, key: String) -> Result<()> {
+    fn remove(&mut self, key: String) -> Result<()> {
         if let Some(_) = self.index.remove(&key) {
             let log = self.get_log(self.log_pointer)?;
             log.write_log(&Command::Remove { key: key.clone() })?;
@@ -88,6 +73,26 @@ impl KvStore {
             return Err(KvsError::Remove(key).into());
         }
         Ok(())
+    }
+}
+
+impl KvStore {
+    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
+        let path: PathBuf = path.into();
+        if !path.exists() {
+            fs::create_dir_all(path.clone())?;
+        }
+        let mut kvs = KvStore {
+            log_pointer: 0,
+            logs: HashMap::new(),
+            path: path.clone(),
+            index: HashMap::new(),
+        };
+        kvs.build()?;
+        if kvs.log_pointer == 0 {
+            kvs.new_log()?;
+        }
+        Ok(kvs)
     }
 
     pub fn gen_log_name(log_id: u64) -> String {
@@ -154,23 +159,26 @@ impl KvStore {
         Ok(())
     }
 
-
-    fn compact(&mut self) -> Result<()>{
+    fn compact(&mut self) -> Result<()> {
         let old_ptr = self.log_pointer;
         self.new_log()?;
         let logs = &mut self.logs;
         let index = &mut self.index;
-        for (_,rcd) in index.iter_mut() {
-                let log = logs.get_mut(&rcd.log_id).ok_or(KvsError::UnKnownLog(rcd.log_id))?;
-                let cmd = log.read_from_where(rcd.offset, rcd.length)?;
-                let cur_log = logs.get_mut(&self.log_pointer).ok_or(KvsError::UnKnownLog(self.log_pointer))?;
-                let (offset,length) = cur_log.write_log(&cmd)?;
-                rcd.log_id = self.log_pointer;
-                rcd.offset = offset;
-                rcd.length = length;
+        for (_, rcd) in index.iter_mut() {
+            let log = logs
+                .get_mut(&rcd.log_id)
+                .ok_or(KvsError::UnKnownLog(rcd.log_id))?;
+            let cmd = log.read_from_where(rcd.offset, rcd.length)?;
+            let cur_log = logs
+                .get_mut(&self.log_pointer)
+                .ok_or(KvsError::UnKnownLog(self.log_pointer))?;
+            let (offset, length) = cur_log.write_log(&cmd)?;
+            rcd.log_id = self.log_pointer;
+            rcd.offset = offset;
+            rcd.length = length;
         }
         let mut ids = read_all_log_idx_and_sort(&self.path)?;
-        ids = ids.into_iter().filter(|v| *v<=old_ptr).collect();
+        ids = ids.into_iter().filter(|v| *v <= old_ptr).collect();
         let path = self.path.clone();
         for id in ids {
             self.logs.remove(&id);
@@ -242,7 +250,7 @@ impl FileWithPos {
         Ok(self.fd.seek(pos)?)
     }
 
-    pub fn size(&mut self) ->Result<u64> {
+    pub fn size(&mut self) -> Result<u64> {
         self.seek(SeekFrom::End(0))
     }
 }
